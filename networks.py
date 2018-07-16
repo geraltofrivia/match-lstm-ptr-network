@@ -1,5 +1,5 @@
 from __future__ import unicode_literals, print_function, division
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 from io import open
 import numpy as np
 import unicodedata
