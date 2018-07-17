@@ -61,7 +61,7 @@ random.seed(42)
 # Macros 
 DATA_LOC = './data/domain/'
 MODEL_LOC = './models/mlstms/domain/'
-VOCAB_FILE = './models/mlstms/domain/vocab.dat'
+VOCAB_FILE = './data/domain/vocab.dat'
 DEBUG = 1
 
 # Neural Network Macros (some useless)
