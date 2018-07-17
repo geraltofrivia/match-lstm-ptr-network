@@ -41,7 +41,7 @@ class Encoder(nn.Module):
         self.embedding.weight.requires_grad = True
        
         # LSTM Layer
-        self.lstm = nn.LSTM(self.embeddingdim, self.hiddendim, bidirectional=True)
+        self.lstm = nn.LSTM(self.embeddingdim, self.hiddendim, bidirectional=True, batch_first=False)
         
     def init_hidden(self, batch_size, device):
         
@@ -61,10 +61,13 @@ class Encoder(nn.Module):
         if self.debug > 4: print("h:\t", h[0].shape, h[1].shape)
         
         x_emb = self.embedding(x)
-        if self.debug > 4: print("x_emb:\t", x_emb.shape)
+        if self.debug > 4: 
+            print("x_emb:\t", x_emb.shape)
+#             print("x_emb_wrong:\t", x_emb.transpose(1,0).shape)           
             
-        ycap, h = self.lstm(x_emb.view(-1, b, self.embeddingdim), h)
-        if self.debug > 4: print("ycap:\t", ycap.shape)
+        ycap, h = self.lstm(x_emb.transpose(1,0), h)
+        if self.debug > 4: 
+            print("ycap:\t", ycap.shape)
         
         return ycap, h
 
@@ -87,7 +90,7 @@ class MatchLSTMEncoder(nn.Module):
         self.alpha_i_w = nn.Parameter(torch.rand((self.hidden_dim, 1)))
         self.alpha_i_b = nn.Parameter(torch.rand((1)))
         
-        self.lstm_summary = nn.LSTM((self.ques_len+1)*2*self.hidden_dim, self.hidden_dim)
+        self.lstm_summary = nn.LSTM((self.ques_len+1)*2*self.hidden_dim, self.hidden_dim, batch_first=False)
                                       
     
     def forward(self, H_p, h_ri, H_q, hidden, device):
@@ -134,9 +137,9 @@ class MatchLSTMEncoder(nn.Module):
             G_i = F.tanh(lin_g_input_a + lin_g_input_b)
             if self.debug > 4: print("G_i:\t\t\t", G_i.shape)
             # Note; G_i should be a 1D vector over ques_len
-
+            
             # Attention weights
-            alpha_i_input_a = G_i.view(batch_size, -1, self.hidden_dim).matmul(self.alpha_i_w).view(batch_size, 1, -1)
+            alpha_i_input_a = G_i.transpose(1,0).matmul(self.alpha_i_w).view(batch_size, 1, -1)
             if self.debug > 4: print("alpha_i_input_a:\t", alpha_i_input_a.shape)
 
             alpha_i_input = alpha_i_input_a.add_(self.alpha_i_b.view(-1,1,1).repeat(1,1,self.ques_len))
@@ -144,34 +147,28 @@ class MatchLSTMEncoder(nn.Module):
 
             # Softmax over alpha inputs
             alpha_i = F.softmax(alpha_i_input, dim=-1)
-            if self.debug > 4: print("alpha_i:\t\t", alpha_i.shape)
-
+            if self.debug > 4: print("alpha_i:\t\t", alpha_i.shape)  
+                
             # Weighted summary of question with alpha    
             z_i_input_b = (
-                            H_q.view(batch_size, self.ques_len, -1) *
+                            H_q.transpose(1, 0) *
                            (alpha_i.view(batch_size, self.ques_len, -1).repeat(1, 1, 2*self.hidden_dim))
-                          ).view(self.ques_len,batch_size, -1)
+                          ).transpose(1, 0)
             if self.debug > 4: print("z_i_input_b:\t\t", z_i_input_b.shape)
 
             z_i = torch.cat((H_p[i].view(1, batch_size, -1), z_i_input_b), dim=0)
             if self.debug > 4: print("z_i:\t\t\t", z_i.shape)
 
-            # Pass z_i, h_ri to the LSTM 
-#             lstm_input = torch.cat((z_i.view(1, batch_size,-1), H_r[i].view(1, batch_size, -1)), dim=2)
-#             if self.debug > 4: print("lstm_input:\t\t", lstm_input.shape)
-
-            # Take input from LSTM, concat in H_r and nullify the temp var.
-            h_ri, (_, hidden) = self.lstm_summary(z_i.view(1, batch_size, -1), 
+            # Take input from LSTM, concat in H_r and nullify the temp var.                
+            h_ri, (_, hidden) = self.lstm_summary(z_i.transpose(1,0).contiguous().view(1, batch_size, -1), 
                                              (H_r[i].view(1,batch_size, -1), hidden))
             if self.debug > 4:
                 print("newh_ri:\t\t", h_ri.shape)
                 print("newhidden:\t\t", hidden.shape)
             H_r = torch.cat((H_r, h_ri), dim=0)
-#             h_ri = None
             
             if self.debug > 4:
                 print("\tH_r:\t\t\t", H_r.shape)
-#                 print("hidden new:\t\t", hidden[0].shape, hidden[1].shape)
 
         return H_r[1:]
     
@@ -200,7 +197,7 @@ class PointerDecoder(nn.Module):
         self.beta_k_w = nn.Parameter(torch.randn(self.hidden_dim, 1))
         self.beta_k_b = nn.Parameter(torch.randn(1))
         
-        self.lstm = nn.LSTM(self.hidden_dim*self.para_len, self.hidden_dim)
+        self.lstm = nn.LSTM(self.hidden_dim*self.para_len, self.hidden_dim, batch_first=False)
 
     
     def init_hidden(self, batch_size, device):
@@ -236,9 +233,9 @@ class PointerDecoder(nn.Module):
         # Send it off to tanh now
         F_k = F.tanh(f_input_a+f_input_b)
         if self.debug > 4: print("F_k:\t\t\t", F_k.shape) #PARA_LEN,BATCHSIZE,EmbeddingDim
-            
+        
         # Attention weights
-        beta_k_input_a = F_k.view(batch_size, -1, self.hidden_dim).matmul(self.beta_k_w).view(batch_size, 1, -1)
+        beta_k_input_a = F_k.transpose(1,0).matmul(self.beta_k_w).view(batch_size, 1, -1)
         if self.debug > 4: print("beta_k_input_a:\t\t", beta_k_input_a.shape)
             
         beta_k_input = beta_k_input_a.add_(self.beta_k_b.repeat(1,1,self.para_len))
@@ -246,13 +243,10 @@ class PointerDecoder(nn.Module):
             
         beta_k = F.softmax(beta_k_input, dim=-1)
         if self.debug > 4: print("beta_k:\t\t\t", beta_k.shape)
-            
-        lstm_input_a = H_r.view(batch_size, self.para_len, -1) * (beta_k.view(batch_size, self.para_len, -1).repeat(1,1,self.hidden_dim))
-        if self.debug > 4: print("lstm_input_a:\t\t", lstm_input_a.shape)
-            
-#         lstm_input = torch.cat((lstm_input_a.view(1, batch_size,-1), h_ak.view(1, batch_size, -1)), dim=2)
-#         if self.debug > 4: print("lstm_input:\t\t", lstm_input.shape)
         
-        h_ak, (_, hidden) = self.lstm(lstm_input_a.view(1, batch_size, -1), (h_ak, hidden))
+        lstm_input_a = H_r.transpose(1,0) * (beta_k.view(batch_size, self.para_len, -1).repeat(1,1,self.hidden_dim))
+        if self.debug > 4: print("lstm_input_a:\t\t", lstm_input_a.shape)
+        
+        h_ak, (_, hidden) = self.lstm(lstm_input_a.transpose(1,0).contiguous().view(1, batch_size, -1), (h_ak, hidden))
         
         return h_ak, hidden, F.log_softmax(beta_k_input, dim=-1)
