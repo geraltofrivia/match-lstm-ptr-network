@@ -30,6 +30,7 @@ from __future__ import unicode_literals, print_function, division
 from bottle import get, request, run, response, HTTPError, post
 from io import open
 # import matplotlib.pyplot as plt
+import collections
 import numpy as np
 import unicodedata
 import traceback
@@ -68,7 +69,7 @@ QUES_LEN, PARA_LEN =  30, 200
 VOCAB_SIZE = 120000
 HIDDEN_DIM = 150
 EMBEDDING_DIM = 300
-BATCH_SIZE = 1                  # Might have total 100 batches.
+BATCH_SIZE = 50                  # Might have total 100 batches.
 EPOCHS = 300
 TEST_EVERY_ = 1
 LR = 0.001
@@ -201,7 +202,7 @@ def text_to_id(text):
 	return np.array(processed_text)
 
 
-def predict_span(question_id,paragraph_id):
+def predict_span(question_id,paragraph_id,batch_size = None):
 	'''
 		Returns the span of the paragraph_id. 
 	'''
@@ -210,6 +211,11 @@ def predict_span(question_id,paragraph_id):
 	padded_question_id[0,:min(len(question_id),macros['ques_len'])] = question_id[:min(len(question_id),macros['ques_len'])]
 	padded_para_id[0,:min(len(paragraph_id),macros['para_len'])] = paragraph_id[:min(len(paragraph_id),macros['para_len'])].reshape(1,-1)
 	
+	if batch_size:
+		padded_para_id = np.repeat(padded_para_id,batch_size,axis=0)
+		padded_question_id = np.repeat(padded_question_id,batch_size,axis=0)
+
+
 	# Pass the padded versions to the predict function, get model outputs.
 	y_cap_start, y_cap_end, _ = predict(torch.tensor(padded_para_id, dtype=torch.long, device=device), 
                                    torch.tensor(padded_question_id, dtype=torch.long, device=device),
@@ -221,9 +227,13 @@ def predict_span(question_id,paragraph_id):
                                     debug=macros['debug'])
 
 	# Find the max ID from the model outputs to get start and end span.
-	y_cap_start,y_cap_end = torch.argmax(y_cap_start.squeeze(1), dim=1).float(), torch.argmax(y_cap_end.squeeze(1), dim=1).float()
-
-	return y_cap_start.item(),y_cap_end.item()
+	if batch_size:
+		y_cap_start,y_cap_end = torch.argmax(y_cap_start.squeeze(), dim=0),torch.argmax(y_cap_end.squeeze(), dim=0)
+		print("most common are ,", collections.Counter(y_cap_start).most_common()[0][0].item(),collections.Counter(y_cap_end).most_common()[0][0].item())
+		return collections.Counter(y_cap_start).most_common()[0][0],collections.Counter(y_cap_end).most_common()[0][0]
+	else:
+		y_cap_start,y_cap_end = torch.argmax(y_cap_start.squeeze(1), dim=1).float(), torch.argmax(y_cap_end.squeeze(1), dim=1).float()	
+		return y_cap_start.item(),y_cap_end.item()
 
 
 def retrive_span(start_index,end_index,paragraph):
@@ -261,11 +271,9 @@ def answer():
 			paragraphs = data['paragraphs']
 			for index,para in enumerate(paragraphs):
 				paragraph_id = text_to_id(para['paragraph'])
-				start_index,end_index = predict_span(question_id, paragraph_id)
-				v = retrive_span(int(start_index), int(end_index), para['paragraph'])
-				paragraphs[index]['span'] = v
+				start_index,end_index = predict_span(question_id, paragraph_id,None)
+				paragraphs[index]['span'] = retrive_span(int(start_index), int(end_index), para['paragraph'])
 				paragraphs[index]['score'] = 1
-				print (paragraphs[index]['span'])
 			data['paragraphs'] = paragraphs
 		except (ValueError,KeyError):
 			print(traceback.print_exc())
